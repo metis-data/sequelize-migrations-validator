@@ -1,4 +1,2 @@
 node_modules
 .idea
-migrations
-.github/workflows/test.yml

@@ -2,6 +2,7 @@ const core = require("@actions/core");
 const execSync = require("child_process").execSync;
 const fs = require("fs");
 const axios = require("axios");
+const tsNode = require("ts-node");
 const path = require("path");
 const { context, getOctokit } = require('@actions/github');
 const { DataTypes, Sequelize } = require('sequelize');
@@ -47,8 +48,12 @@ async function main() {
       await Promise.all(
         newMigrationsFiles.map(async (migration, index) => {
           if (migration.endsWith('.js') || migration.endsWith('.ts')) {
-            const requirePath = path.join(process.cwd(), migration);
+            let requirePath = path.join(process.cwd(), migration);
             console.log(`Path: ${requirePath}`);
+            if (migration.endsWith('.ts')) {
+              tsNode.register({ transpileOnly: true });
+              requirePath = requirePath.replace('.ts', '.js');
+            }
             const { up, down } = require(`${requirePath}`);
             if (typeof up !== 'function' || typeof down !== 'function') {
               core.info(`Migration file ${migration} is missing up/down definitions`);
