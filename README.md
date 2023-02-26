@@ -29,6 +29,20 @@ For example, you can run it in a GitHub Actions workflow job.
       migrations:
         name: Analyze new migrations
         runs-on: ubuntu-latest
+        services:
+          postgres:
+            image: postgres
+            env:
+              POSTGRES_USER: postgres
+              POSTGRES_PASSWORD: postgres
+              POSTGRES_DB: postgres
+            ports:
+              - 5432:5432
+            options: >-
+              --health-cmd pg_isready
+              --health-interval 10s
+              --health-timeout 5s
+              --health-retries 5
         steps:
           - name: Checkout
             uses: actions/checkout@v3
@@ -43,6 +57,10 @@ For example, you can run it in a GitHub Actions workflow job.
               metis_api_key: <Your Api Key>
               migrations_dir: migrations
 ```
+> :warning: **Note:** This workflow need to set up postgres container for Sequelize connection that can take a moment. 
+> The check for actual changes is after the container setup so if you wish to avoid unnecessary runs it is recommended
+> to disable the workflow when no new migrations are present.
+
 ### Parameters
 - `from`: Base sha to be compared
 - `to`: Branch sha to be compared with
