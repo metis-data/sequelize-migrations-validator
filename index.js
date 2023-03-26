@@ -21,14 +21,18 @@ function compileTypescript(path) {
 
   const program = ts.createProgram([path], compilerOptions);
   const emitResult = program.emit();
-  const allDiagnostics = ts.getPreEmitDiagnostics(program).concat(emitResult.diagnostics);
+  const allDiagnostics = ts
+    .getPreEmitDiagnostics(program)
+    .concat(emitResult.diagnostics);
 
   if (allDiagnostics.length) {
-    throw new Error(ts.formatDiagnosticsWithColorAndContext(allDiagnostics, {
-      getCurrentDirectory: ts.sys.getCurrentDirectory,
-      getNewLine: () => ts.sys.newLine,
-      getCanonicalFileName: (fileName) => fileName,
-    }));
+    throw new Error(
+      ts.formatDiagnosticsWithColorAndContext(allDiagnostics, {
+        getCurrentDirectory: ts.sys.getCurrentDirectory,
+        getNewLine: () => ts.sys.newLine,
+        getCanonicalFileName: (fileName) => fileName,
+      }),
+    );
   }
   return ts.sys.readFile(`${path.replace('.ts', '.js')}`);
 }
@@ -49,7 +53,9 @@ async function main() {
     console.log(`Api key ${apiKey}`);
     console.log(`Migrations dir ${migrationsDir}`);
 
-    const output = execSync(`git diff --diff-filter=ACM ${shaFrom} ${shaTo} --name-only ${migrationsDir} | jq -Rsc '. / "\n" - [""]'`);
+    const output = execSync(
+      `git diff --diff-filter=ACM ${shaFrom} ${shaTo} --name-only ${migrationsDir} | egrep -h '.js|.ts' | jq -Rsc '. / "\n" - [""]'`,
+    );
     const newMigrationsFiles = JSON.parse(output);
     console.log(`New files paths: ${newMigrationsFiles}`);
     if (newMigrationsFiles.length) {
@@ -69,34 +75,34 @@ async function main() {
       const insights = {};
       await Promise.all(
         newMigrationsFiles.map(async (migration, index) => {
-          if (migration.endsWith('.js') || migration.endsWith('.ts')) {
-            const requirePath = path.join(process.cwd(), migration);
-            console.log(`Path: ${requirePath}`);
-            let tsOutput, up, down;
-            if (migration.endsWith('.ts')) {
-              tsOutput = compileTypescript(requirePath);
-              ({ up, down } = requireFromString(tsOutput));
-            } else {
-              ({ up, down } = require(requirePath));
-            }
-            if (typeof up !== 'function' || typeof down !== 'function') {
-              core.info(`Migration file ${migration} is missing up/down definitions`);
-              return;
-            }
-            await up(queryInterface, DataTypes);
-            await down(queryInterface, DataTypes);
-
-            const innerInsights = [];
-            queries.map((query) => {
-              const cleanQuery = query.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
-              migrationsData.push(cleanQuery);
-              const insight = parse(cleanQuery);
-              innerInsights.push(...insight);
-            });
-
-            queries.length = 0;
-            Object.assign(insights, {[index]: innerInsights});
+          const requirePath = path.join(process.cwd(), migration);
+          console.log(`Path: ${requirePath}`);
+          let tsOutput, up, down;
+          if (migration.endsWith('.ts')) {
+            tsOutput = compileTypescript(requirePath);
+            ({ up, down } = requireFromString(tsOutput));
+          } else {
+            ({ up, down } = require(requirePath));
           }
+          if (typeof up !== 'function' || typeof down !== 'function') {
+            core.info(
+              `Migration file ${migration} is missing up/down definitions`,
+            );
+            return;
+          }
+          await up(queryInterface, DataTypes);
+          await down(queryInterface, DataTypes);
+
+          const innerInsights = [];
+          queries.map((query) => {
+            const cleanQuery = query.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
+            migrationsData.push(cleanQuery);
+            const insight = parse(cleanQuery);
+            innerInsights.push(...insight);
+          });
+
+          queries.length = 0;
+          Object.assign(insights, { [index]: innerInsights });
         }),
       );
 
