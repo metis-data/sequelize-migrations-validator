@@ -17,6 +17,7 @@ function compileTypescript(path) {
   const compilerOptions = {
     target: ts.ScriptTarget.ESNext,
     module: ts.ModuleKind.CommonJS,
+    skipLibCheck: true,
   };
 
   const program = ts.createProgram([path], compilerOptions);
@@ -54,7 +55,7 @@ async function main() {
     console.log(`Migrations dir ${migrationsDir}`);
 
     const output = execSync(
-      `git diff --diff-filter=ACM ${shaFrom} ${shaTo} --name-only ${migrationsDir} | egrep -h '.js|.ts' | jq -Rsc '. / "\n" - [""]'`,
+      `git diff --diff-filter=ACM ${shaFrom} ${shaTo} --name-only ${migrationsDir} | grep -E '\.js$|\.ts$' | jq -Rsc '. / "\n" - [""]'`,
     );
     const newMigrationsFiles = JSON.parse(output);
     console.log(`New files paths: ${newMigrationsFiles}`);
@@ -79,7 +80,9 @@ async function main() {
           console.log(`Path: ${requirePath}`);
           let tsOutput, up, down;
           if (migration.endsWith('.ts')) {
+            console.log('Compiling...');
             tsOutput = compileTypescript(requirePath);
+            console.log('Get up/down');
             ({ up, down } = requireFromString(tsOutput));
           } else {
             ({ up, down } = require(requirePath));
@@ -90,6 +93,7 @@ async function main() {
             );
             return;
           }
+          console.log('Run up/down');
           await up(queryInterface, DataTypes);
           await down(queryInterface, DataTypes);
 
@@ -97,6 +101,7 @@ async function main() {
           queries.map((query) => {
             const cleanQuery = query.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
             migrationsData.push(cleanQuery);
+            console.log('Parse...');
             const insight = parse(cleanQuery);
             innerInsights.push(...insight);
           });
