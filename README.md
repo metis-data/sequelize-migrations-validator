@@ -3,7 +3,7 @@ Github action for auto analyze sequelize migrations files in PRs
 
 ## Sequelize Migrations Validator Action For GitHub Actions
 
-An action for auto recognize new sequelize migrations files submitted in a pull request. Those files will be sent to be analyzed 
+An action for auto recognize new sequelize migrations files submitted in a pull request (.js|.ts). Those files will be sent to be analyzed 
 and derive insights on Metis-data platform.
 
 ## Usage

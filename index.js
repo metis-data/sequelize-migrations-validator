@@ -1,21 +1,46 @@
-const core = require("@actions/core");
-const execSync = require("child_process").execSync;
-const fs = require("fs");
-const axios = require("axios");
-const path = require("path");
+const execSync = require('child_process').execSync;
+execSync('npm install -g pgsql-parser');
+const globalPath = execSync('npm root -g');
+const parserPath = `${globalPath}`.replace('\n', '') + '/pgsql-parser/main';
+const core = require('@actions/core');
+const ts = require('typescript');
+const requireFromString = require('require-from-string');
+const axios = require('axios');
+const path = require('path');
+const { parse } = require(parserPath);
 const { context, getOctokit } = require('@actions/github');
 const { DataTypes, Sequelize } = require('sequelize');
 
 const SEQUELIZE_EXECUTION_LOG_PREFIX = 'Executing (default): ';
 
+function compileTypescript(path) {
+  const compilerOptions = {
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.CommonJS,
+  };
+
+  const program = ts.createProgram([path], compilerOptions);
+  const emitResult = program.emit();
+  const allDiagnostics = ts.getPreEmitDiagnostics(program).concat(emitResult.diagnostics);
+
+  if (allDiagnostics.length) {
+    throw new Error(ts.formatDiagnosticsWithColorAndContext(allDiagnostics, {
+      getCurrentDirectory: ts.sys.getCurrentDirectory,
+      getNewLine: () => ts.sys.newLine,
+      getCanonicalFileName: (fileName) => fileName,
+    }));
+  }
+  return ts.sys.readFile(`${path.replace('.ts', '.js')}`);
+}
+
 async function main() {
   try {
-    const shaFrom = core.getInput("from");
-    const shaTo = core.getInput("to");
-    const apiKey = core.getInput("metis_api_key");
-    const githubToken = core.getInput("github_token");
-    const url = core.getInput("target_url");
-    const migrationsDir = core.getInput("migrations_dir");
+    const shaFrom = core.getInput('from');
+    const shaTo = core.getInput('to');
+    const apiKey = core.getInput('metis_api_key');
+    const githubToken = core.getInput('github_token');
+    const url = core.getInput('target_url');
+    const migrationsDir = core.getInput('migrations_dir');
     const pull_request = context.payload?.pull_request;
     const octokit = getOctokit(githubToken);
 
@@ -29,7 +54,6 @@ async function main() {
     console.log(`New files paths: ${newMigrationsFiles}`);
     if (newMigrationsFiles.length) {
       const queries = [];
-      execSync('npm install -g pgsql-parser');
       const sequelize = new Sequelize({
         host: 'localhost',
         port: 5432,
@@ -43,57 +67,60 @@ async function main() {
 
       const migrationsData = [];
       const insights = {};
-      const tempMigrations = [];
       await Promise.all(
         newMigrationsFiles.map(async (migration, index) => {
           if (migration.endsWith('.js') || migration.endsWith('.ts')) {
             const requirePath = path.join(process.cwd(), migration);
             console.log(`Path: ${requirePath}`);
-            const { up, down } = require(`${requirePath}`);
+            let tsOutput, up, down;
+            if (migration.endsWith('.ts')) {
+              tsOutput = compileTypescript(requirePath);
+              ({ up, down } = requireFromString(tsOutput));
+            } else {
+              ({ up, down } = require(requirePath));
+            }
             if (typeof up !== 'function' || typeof down !== 'function') {
               core.info(`Migration file ${migration} is missing up/down definitions`);
               return;
             }
-            const tempMigration = `temp_${index}.sql`;
-            tempMigrations.push(tempMigration);
             await up(queryInterface, DataTypes);
-            const rawUpSql = queries.pop()?.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
-            console.log(`Got up sql ${rawUpSql}`);
-            fs.writeFileSync(tempMigration, rawUpSql, { encoding: 'utf-8', flag: 'wx' } );
-
             await down(queryInterface, DataTypes);
-            const rawDownSql = queries.pop()?.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
-            console.log(`Got down sql ${rawDownSql}`);
-            fs.appendFileSync(tempMigration, rawDownSql, { encoding: 'utf-8' });
+
+            const innerInsights = [];
+            queries.map((query) => {
+              const cleanQuery = query.split(SEQUELIZE_EXECUTION_LOG_PREFIX)?.[1];
+              migrationsData.push(cleanQuery);
+              const insight = parse(cleanQuery);
+              innerInsights.push(...insight);
+            });
+
+            queries.length = 0;
+            Object.assign(insights, {[index]: innerInsights});
           }
         }),
       );
-      console.log(`Applied migrations ${tempMigrations}`);
-
-      tempMigrations.map((migration, index) => {
-        migrationsData.push(fs.readFileSync(migration, { encoding: 'utf-8' }));
-        console.log(`Running the parser on migration ${migration}`);
-        const rawInsight = execSync(`pgsql-parser ${migration}`);
-        const insight = JSON.parse(rawInsight);
-        console.log(`Got insights ${insight}`);
-        Object.assign(insights, {[index]: insight});
-      });
 
       console.log('Trying to send insights');
-      const res = await axios.post(`${url}/api/migrations/create`, {
-        migrationsData,
-        prId: `${pull_request.number}`,
-        apiKey,
-        insights
-      });
-      console.log(res);
+      const res = await axios.post(
+        `${url}/api/migrations/create`,
+        {
+          migrationsData,
+          prId: `${pull_request.number}`,
+          prName: pull_request.title || context.sha,
+          prUrl: pull_request.html_url,
+          insights,
+        },
+        { headers: { 'x-api-key': apiKey } },
+      );
+      console.log(
+        `Got response status: ${res.status} with text: ${res.statusText}`,
+      );
 
       await octokit.rest.issues.createComment({
         ...context.repo,
         issue_number: pull_request.number,
-        body: `Metis analyzed your new migrations files. View the results in the link: ${encodeURI(
-          `${url}/migrations/${apiKey}/${pull_request.number}`
-        )}`,
+        body: `Metis analyzed your new migrations files. View the results under Pull Requests in the link: 
+          ${encodeURI(`${url}/projects/${apiKey}`)}`,
       });
     }
   } catch (e) {
